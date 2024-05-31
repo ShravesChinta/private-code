@@ -18,38 +18,44 @@ def process_large_csv(blob_client):
     total_rows_removed = 0
     total_rows_remaining = 0
 
-    output_stream = io.StringIO()
     downloader = blob_client.download_blob()
 
+    # Open the output stream for the processed data
+    output_stream = io.BytesIO()
+
     try:
-        # Process the blob in chunks
+        # Stream download the blob and process it in chunks
         stream = io.BytesIO()
-        downloader.readinto(stream)
-        stream.seek(0)
+        for chunk in downloader.chunks():
+            stream.write(chunk)
+            stream.seek(0)
 
-        # Read the CSV in chunks
-        for chunk_df in pd.read_csv(stream, chunksize=10000):
-            if 'date' in chunk_df.columns:
-                chunk_df['date'] = pd.to_datetime(chunk_df['date'], errors='coerce')
-                old_data = chunk_df[chunk_df['date'] < cutoff_date]
-                chunk_df = chunk_df[chunk_df['date'] >= cutoff_date]
+            # Read the CSV chunk by chunk
+            for chunk_df in pd.read_csv(stream, chunksize=10000):
+                if 'date' in chunk_df.columns:
+                    chunk_df['date'] = pd.to_datetime(chunk_df['date'], errors='coerce')
+                    old_data = chunk_df[chunk_df['date'] < cutoff_date]
+                    chunk_df = chunk_df[chunk_df['date'] >= cutoff_date]
 
-                total_rows_removed += len(old_data)
-                total_rows_remaining += len(chunk_df)
+                    total_rows_removed += len(old_data)
+                    total_rows_remaining += len(chunk_df)
 
-                chunk_df.to_csv(output_stream, mode='a', index=False, header=output_stream.tell() == 0)
-            else:
-                logging.warning(f"No 'date' column found in chunk of blob: {blob_client.blob_name}")
-                continue
+                    # Write the filtered chunk to the output stream
+                    chunk_df.to_csv(output_stream, mode='a', index=False, header=output_stream.tell() == 0)
+                else:
+                    logging.warning(f"No 'date' column found in chunk of blob: {blob_client.blob_name}")
+                    continue
 
-        # Log the information
-        logging.info(f"Processed blob: {blob_client.blob_name}")
-        logging.info(f"Number of rows removed: {total_rows_removed}")
-        logging.info(f"Remaining rows: {total_rows_remaining}")
+            # Clear the stream for the next chunk
+            stream.truncate(0)
+            stream.seek(0)
+
+        # Log the information about rows removed
+        logging.info(f"Processed blob: {blob_client.blob_name} - Rows removed: {total_rows_removed}, Remaining rows: {total_rows_remaining}")
 
         # Upload the processed data back to the blob
         output_stream.seek(0)
-        blob_client.upload_blob(output_stream.getvalue(), overwrite=True)
+        blob_client.upload_blob(output_stream, overwrite=True)
     except Exception as e:
         logging.error(f"Error processing blob {blob_client.blob_name}: {str(e)}")
 
