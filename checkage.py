@@ -1,73 +1,18 @@
-from azure.storage.blob import BlobServiceClient
-import pandas as pd
-import io
-from datetime import datetime, timedelta
-import logging
+from datetime import datetime
+import calendar
 
-# Configure logging
-logging.basicConfig(filename='blob_processing.log', level=logging.INFO, format='%(asctime)s - %(message)s')
+# Input date string
+input_date_str = '2024-05-06'
 
-def list_blobs_from_container(connect_str, container_name):
-    blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-    container_client = blob_service_client.get_container_client(container_name)
-    blob_list = container_client.list_blobs()
-    return blob_list
+# Convert the string to a datetime object
+date_obj = datetime.strptime(input_date_str, '%Y-%m-%d')
 
-def process_large_csv(blob_client):
-    cutoff_date = datetime.now() - timedelta(days=2*365)
-    total_rows_removed = 0
-    total_rows_remaining = 0
+# Get the first date of the month
+first_day = date_obj.replace(day=1)
 
-    downloader = blob_client.download_blob()
+# Get the last day of the month
+last_day = date_obj.replace(day=calendar.monthrange(date_obj.year, date_obj.month)[1])
 
-    # Open the output stream for the processed data
-    output_stream = io.BytesIO()
-
-    try:
-        # Stream download the blob and process it in chunks
-        stream = io.BytesIO()
-        for chunk in downloader.chunks():
-            stream.write(chunk)
-            stream.seek(0)
-
-            # Read the CSV chunk by chunk
-            for chunk_df in pd.read_csv(stream, chunksize=10000):
-                if 'date' in chunk_df.columns:
-                    chunk_df['date'] = pd.to_datetime(chunk_df['date'], errors='coerce')
-                    old_data = chunk_df[chunk_df['date'] < cutoff_date]
-                    chunk_df = chunk_df[chunk_df['date'] >= cutoff_date]
-
-                    total_rows_removed += len(old_data)
-                    total_rows_remaining += len(chunk_df)
-
-                    # Write the filtered chunk to the output stream
-                    chunk_df.to_csv(output_stream, mode='a', index=False, header=output_stream.tell() == 0)
-                else:
-                    logging.warning(f"No 'date' column found in chunk of blob: {blob_client.blob_name}")
-                    continue
-
-            # Clear the stream for the next chunk
-            stream.truncate(0)
-            stream.seek(0)
-
-        # Log the information about rows removed
-        logging.info(f"Processed blob: {blob_client.blob_name} - Rows removed: {total_rows_removed}, Remaining rows: {total_rows_remaining}")
-
-        # Upload the processed data back to the blob
-        output_stream.seek(0)
-        blob_client.upload_blob(output_stream, overwrite=True)
-    except Exception as e:
-        logging.error(f"Error processing blob {blob_client.blob_name}: {str(e)}")
-
-def check_age_of_the_data(container_name, connect_str):
-    blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-    blob_list = list_blobs_from_container(connect_str, container_name)
-    
-    for blob in blob_list:
-        blob_client = blob_service_client.get_blob_client(container_name, blob.name)
-        process_large_csv(blob_client)
-
-# Example usage
-connect_str = 'your_connection_string'
-container_name = 'your_container_name'
-check_age_of_the_data(container_name, connect_str)
+# Print the results in the desired format
+print(f"First day of the month: {first_day.strftime('%Y-%m-%d')}")
+print(f"Last day of the month: {last_day.strftime('%Y-%m-%d')}")
